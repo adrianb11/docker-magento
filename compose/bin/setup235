@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+set -o errexit
+
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+STEP=1
+
+MEM=$(docker info | grep "Total Memory" | cut -d':' -f2 | xargs | sed s/GiB//)
+# Docker reports RAM 0.2 less than what it is actually set to
+(( $(echo "$MEM < 5.7" | bc -l) )) && echo -e "${RED}There must be at least 6GB of RAM allocated to Docker to continue." && exit
+
+Help()
+{
+   # Display Help
+   echo
+   echo "Fully setup and install Magento 2.3.5-p2 from current source"
+   echo
+   echo "Syntax: [-d|e|help]"
+   echo "options:"
+   echo "-d      Sets the domain name (domain.test)."
+   echo "-e      Sets the email address for order confirmations."
+   echo "-h      Print this help and exit."
+   echo
+}
+
+while getopts 'd:e:h' flag; do
+  case "${flag}" in
+        d)
+			DOMAIN="${OPTARG}";;
+		e)
+			EMAIL="${OPTARG}";;
+		h|*)
+			Help
+			exit 1;;
+    esac
+done
+echo
+[ -z "${DOMAIN}" ] && echo -e "${RED}Please specify a domain name ${NC}(ex. -d magento.test)" && Help && exit
+echo "Domain: $DOMAIN"
+[ -z "${EMAIL}" ] && echo -e "${RED}Please specify an email address ${NC}(ex. -e none@example.com)" && Help && exit
+echo "Email: $EMAIL"
+
+if [ ! -w "/etc/hosts" ]
+then
+    echo -e "${RED}ERROR: Your system password is needed to add an entry to /etc/hosts... Change permissions and run setup again."
+	exit
+fi
+
+cp -f compose235.yaml compose.yaml
+cp -f compose235.healthcheck.yaml compose.healthcheck.yaml
+
+# Replace with existing source code of your existing Magento instance:
+echo -e "${RED}Step ${STEP}: ${NC} Create src directory..."
+[ -d src ] || echo -e "Creating src directory..." && mkdir src
+((STEP++))
+
+# Start some containers, copy files to them and then restart the containers:
+echo -e "${RED}Step ${STEP}: ${NC} Start some containers..."
+bin/start --no-dev
+((STEP++))
+
+echo -e "${RED}Step ${STEP}: ${NC} Copying files..."
+cp -R ~/Dropbox/existing/files/files.tar.gz src
+tar -xzf src/files.tar.gz -C src
+rm -f src/files.tar.gz
+((STEP++))
+
+echo -e "${RED}Step ${STEP}: ${NC} Copy src folder to container..."
+bin/copytocontainer --all ## Initial copy will take a few minutes...
+((STEP++))
+
+# If your vendor directory was empty, populate it with:
+echo -e "${RED}Step ${STEP}: ${NC} Run composer install..."
+bin/composer install
+((STEP++))
+
+# Import existing database:
+echo -e "${RED}Step ${STEP}: ${NC} Import database backup..."
+cp -R ~/Dropbox/existing/db/database.tar.gz .
+tar -xvzf database.tar.gz
+bin/mysql < database.sql
+rm -f database.tar.gz && rm -f database.sql
+((STEP++))
+
+# Import app-specific environment settings:
+#bin/magento app:config:import
+
+# Create a DNS host entry and setup Magento base url
+echo -e "${RED}Step ${STEP}: ${NC} Create a DNS host entry and setup Magento base url..."
+echo "127.0.0.1 ::1 $DOMAIN" >> /etc/hosts
+bin/clinotty bin/magento config:set web/secure/base_url https://"$DOMAIN"/
+bin/clinotty bin/magento config:set web/unsecure/base_url https://"$DOMAIN"/
+bin/clinotty bin/magento config:set sales_email/order/copy_to "$EMAIL"
+bin/clinotty bin/magento config:set sales_email/order_comment/copy_to "$EMAIL"
+bin/clinotty bin/magento config:set sales_email/invoice/copy_to "$EMAIL"
+bin/clinotty bin/magento config:set sales_email/invoice_comment/copy_to "$EMAIL"
+bin/clinotty bin/magento config:set sales_email/shipment_comment/copy_to "$EMAIL"
+bin/clinotty bin/magento config:set sales_email/creditmemo/copy_to "$EMAIL"
+bin/clinotty bin/magento config:set sales_email/creditmemo_comment/copy_to "$EMAIL"
+((STEP++))
+
+echo "${RED}Step ${STEP}: ${NC} Generating SSL certificate..."
+bin/setup-ssl "$DOMAIN"
+((STEP++))
+
+echo -e "${RED}Step ${STEP}: ${NC} Run deployer:refresh..."
+bin/cli dep deploy:magento
+((STEP++))
+
+echo -e "${RED}Step ${STEP}: ${NC} Restart services..."
+bin/restart
+((STEP++))
