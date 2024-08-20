@@ -63,6 +63,7 @@ echo -e "${RED}Step ${STEP}: ${NC} Copying files..."
 cp -R ~/Dropbox/existing/files/files.tar.gz src
 tar -xzf src/files.tar.gz -C src
 rm -f src/files.tar.gz
+cp -f auth.json src
 ((STEP++))
 
 echo -e "${RED}Step ${STEP}: ${NC} Copy src folder to container..."
