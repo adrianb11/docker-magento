@@ -17,18 +17,24 @@ Help()
    echo
    echo "Syntax: [-d|e|help]"
    echo "options:"
-   echo "-d      Sets the domain name (domain.test)."
+   echo "-d      Sets the domain name."
    echo "-e      Sets the email address for order confirmations."
+   echo "-r      Sets the repository."
+   echo "-b      Sets the repository branch."
    echo "-h      Print this help and exit."
    echo
 }
 
-while getopts 'd:e:h' flag; do
+while getopts 'd:e:r:b:h' flag; do
   case "${flag}" in
         d)
 			DOMAIN="${OPTARG}";;
 		e)
 			EMAIL="${OPTARG}";;
+		r)
+			REPOSITORY="${OPTARG}";;
+		b)
+			BRANCH="${OPTARG}";;
 		h|*)
 			Help
 			exit 1;;
@@ -39,6 +45,10 @@ echo
 echo "Domain: $DOMAIN"
 [ -z "${EMAIL}" ] && echo -e "${RED}Please specify an email address ${NC}(ex. -e none@example.com)" && Help && exit
 echo "Email: $EMAIL"
+[ -z "${REPOSITORY}" ] && echo -e "${RED}Please specify a repository ${NC}(ex. -r https://bitbucket.org/company/magento.git)" && Help && exit
+echo "Repository: $REPOSITORY"
+[ -z "${BRANCH}" ] && echo -e "${RED}Please specify a branch ${NC}(ex. -b feature/commit-files)" && Help && exit
+echo "Branch: $BRANCH"
 
 if [ ! -w "/etc/hosts" ]
 then
@@ -46,24 +56,39 @@ then
 	exit
 fi
 
+# Check if env.php, auth.json, and deploy.php are available
+if [ ! -e env.php ]; then
+    echo -e "${RED}env.php file does not exist.${NC}"
+	exit
+fi
+if [ ! -e auth.json ]; then
+    echo -e "${RED}auth.json file does not exist.${NC}"
+	exit
+fi
+if [ ! -e deploy.php ]; then
+    echo -e "${RED}deploy.php file does not exist.${NC}"
+	exit
+fi
+if [ ! -e db.sql ]; then
+    echo -e "${RED}db.sql database file does not exist.${NC}"
+	exit
+fi
+
+
 cp -f compose235.yaml compose.yaml
 cp -f compose235.healthcheck.yaml compose.healthcheck.yaml
-
-# Replace with existing source code of your existing Magento instance:
-echo -e "${RED}Step ${STEP}: ${NC} Create src directory..."
-[ -d src ] || echo -e "Creating src directory..." && mkdir src
-((STEP++))
 
 # Start some containers, copy files to them and then restart the containers:
 echo -e "${RED}Step ${STEP}: ${NC} Start some containers..."
 bin/start --no-dev
+bin/root composer selfupdate --2
 ((STEP++))
 
-echo -e "${RED}Step ${STEP}: ${NC} Copying files..."
-cp -R ~/Dropbox/existing/files/files.tar.gz src
-tar -xzf src/files.tar.gz -C src
-rm -f src/files.tar.gz
-cp -f auth.json src
+echo -e "${RED}Step ${STEP}: ${NC} Download latest repository..."
+git clone --single-branch --branch "$BRANCH" "$REPOSITORY" src
+cp env.php src/app/etc/env.php
+cp auth.json src/auth.json
+cp deploy.php src/deploy.php
 ((STEP++))
 
 echo -e "${RED}Step ${STEP}: ${NC} Copy src folder to container..."
@@ -77,14 +102,8 @@ bin/composer install
 
 # Import existing database:
 echo -e "${RED}Step ${STEP}: ${NC} Import database backup..."
-cp -R ~/Dropbox/existing/db/database.tar.gz .
-tar -xvzf database.tar.gz
-bin/mysql < database.sql
-rm -f database.tar.gz && rm -f database.sql
+bin/mysql < db.sql
 ((STEP++))
-
-# Import app-specific environment settings:
-#bin/magento app:config:import
 
 # Create a DNS host entry and setup Magento base url
 echo -e "${RED}Step ${STEP}: ${NC} Create a DNS host entry and setup Magento base url..."
